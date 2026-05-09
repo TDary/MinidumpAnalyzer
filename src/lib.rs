@@ -5,11 +5,25 @@ use anyhow::Result;
 use minidump::{
     Minidump, MinidumpException, MinidumpMiscInfo, MinidumpModuleList, MinidumpSystemInfo,
 };
-use minidump_processor::{http_symbol_supplier, MultiSymbolProvider, Symbolizer};
+use minidump_processor::{MultiSymbolProvider, Symbolizer, http_symbol_supplier};
 use std::path::Path;
 
 const MICROSOFT_SYMBOL_SERVER: &str = "https://msdl.microsoft.com/download/symbols";
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Verbosity {
+    Quiet,
+    Normal,
+    Verbose,
+}
+
+impl Verbosity {
+    pub fn is_silent(self) -> bool {
+        matches!(self, Self::Quiet)
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 pub async fn analyze(
     dmp_path: &str,
     symbols_dir: &Path,
@@ -18,7 +32,7 @@ pub async fn analyze(
     download_only: bool,
     include_all_threads: bool,
     include_registers: bool,
-    quiet: bool,
+    verbosity: Verbosity,
 ) -> Result<analyzer::CrashReport> {
     let dump = Minidump::read_path(dmp_path)?;
 
@@ -30,7 +44,11 @@ pub async fn analyze(
     let context = if include_registers {
         exception
             .as_ref()
-            .and_then(|exc| sys_info.as_ref().and_then(|si| exc.context(si, misc_info.as_ref())))
+            .and_then(|exc| {
+                sys_info
+                    .as_ref()
+                    .and_then(|si| exc.context(si, misc_info.as_ref()))
+            })
             .map(|cow| cow.into_owned())
     } else {
         None
@@ -45,7 +63,7 @@ pub async fn analyze(
                 cache_dir,
                 pdb_dir,
                 download_only && pdb_dir.is_none(),
-                quiet,
+                verbosity,
             )
             .await?;
         }
@@ -67,8 +85,13 @@ pub async fn analyze(
     let symbols_tmp = std::env::temp_dir();
     let timeout = std::time::Duration::from_secs(120);
 
-    let supplier =
-        http_symbol_supplier(symbol_paths, symbol_urls, symbols_cache, symbols_tmp, timeout);
+    let supplier = http_symbol_supplier(
+        symbol_paths,
+        symbol_urls,
+        symbols_cache,
+        symbols_tmp,
+        timeout,
+    );
     let symbolizer = Symbolizer::new(supplier);
 
     let mut provider = MultiSymbolProvider::new();

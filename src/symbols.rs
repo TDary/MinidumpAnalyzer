@@ -2,6 +2,9 @@ use anyhow::{Context, Result};
 use minidump::{MinidumpModuleList, Module};
 use std::path::Path;
 use std::process::Command;
+use std::time::Instant;
+
+use crate::Verbosity;
 
 const MICROSOFT_SYMBOL_SERVER: &str = "https://msdl.microsoft.com/download/symbols";
 
@@ -26,13 +29,19 @@ pub fn sym_exists(cache_dir: &Path, pdb_name: &str, breakpad_id: &str) -> bool {
         .exists()
 }
 
-fn dump_syms_convert(target_dir: &Path, pdb_path: &Path, pdb_name: &str, quiet: bool) -> Result<()> {
+fn dump_syms_convert(
+    target_dir: &Path,
+    pdb_path: &Path,
+    pdb_name: &str,
+    verbosity: Verbosity,
+) -> Result<()> {
     let tmp_pdb = target_dir.join(pdb_name);
     std::fs::copy(pdb_path, &tmp_pdb)?;
 
-    if !quiet {
+    if !verbosity.is_silent() {
         eprintln!("  [CONVERT] {} ...", pdb_name);
     }
+    let started = Instant::now();
     let output = Command::new("dump_syms")
         .arg(&tmp_pdb)
         .output()
@@ -45,18 +54,30 @@ fn dump_syms_convert(target_dir: &Path, pdb_path: &Path, pdb_name: &str, quiet: 
         anyhow::bail!("dump_syms 执行失败: {}", stderr);
     }
 
+    if verbosity == Verbosity::Verbose {
+        eprintln!(
+            "          转换耗时: {:.1}s",
+            started.elapsed().as_secs_f32()
+        );
+    }
+
     let sym_name = pdb_name.replace(".pdb", ".sym");
     std::fs::write(target_dir.join(&sym_name), &output.stdout)?;
     Ok(())
 }
 
-async fn download_and_convert(cache_dir: &Path, pdb_name: &str, breakpad_id: &str, quiet: bool) -> Result<()> {
+async fn download_and_convert(
+    cache_dir: &Path,
+    pdb_name: &str,
+    breakpad_id: &str,
+    verbosity: Verbosity,
+) -> Result<()> {
     let sym_name = pdb_name.replace(".pdb", ".sym");
     let target_dir = cache_dir.join(pdb_name).join(breakpad_id);
     let target_file = target_dir.join(&sym_name);
 
     if target_file.exists() {
-        if !quiet {
+        if !verbosity.is_silent() {
             eprintln!("  [SKIP] {} (已存在)", pdb_name);
         }
         return Ok(());
@@ -69,16 +90,21 @@ async fn download_and_convert(cache_dir: &Path, pdb_name: &str, breakpad_id: &st
         MICROSOFT_SYMBOL_SERVER, pdb_name, breakpad_id, pdb_name
     );
 
-    if !quiet {
+    if !verbosity.is_silent() {
         eprintln!("  [DOWNLOAD] {} ...", pdb_name);
     }
+    let started = Instant::now();
     let resp = reqwest::get(&url)
         .await
         .with_context(|| format!("下载失败: {}", url))?;
 
     if !resp.status().is_success() {
-        if !quiet {
-            eprintln!("  [SKIP] {} (HTTP {}, 符号可能不存在)", pdb_name, resp.status());
+        if !verbosity.is_silent() {
+            eprintln!(
+                "  [SKIP] {} (HTTP {}, 符号可能不存在)",
+                pdb_name,
+                resp.status()
+            );
         }
         return Ok(());
     }
@@ -88,12 +114,21 @@ async fn download_and_convert(cache_dir: &Path, pdb_name: &str, breakpad_id: &st
         anyhow::bail!("下载的文件为空");
     }
 
+    if verbosity == Verbosity::Verbose {
+        eprintln!(
+            "          下载耗时: {:.1}s, 大小: {} KB",
+            started.elapsed().as_secs_f32(),
+            pdb_data.len() / 1024
+        );
+    }
+
     let tmp_pdb = target_dir.join(pdb_name);
     std::fs::write(&tmp_pdb, &pdb_data)?;
 
-    if !quiet {
+    if !verbosity.is_silent() {
         eprintln!("  [CONVERT] {} ...", pdb_name);
     }
+    let conv_started = Instant::now();
     let output = Command::new("dump_syms")
         .arg(&tmp_pdb)
         .output()
@@ -106,8 +141,15 @@ async fn download_and_convert(cache_dir: &Path, pdb_name: &str, breakpad_id: &st
         anyhow::bail!("dump_syms 执行失败: {}", stderr);
     }
 
+    if verbosity == Verbosity::Verbose {
+        eprintln!(
+            "          转换耗时: {:.1}s",
+            conv_started.elapsed().as_secs_f32()
+        );
+    }
+
     std::fs::write(&target_file, &output.stdout)?;
-    if !quiet {
+    if !verbosity.is_silent() {
         eprintln!("  [OK] {}", target_file.display());
     }
     Ok(())
@@ -119,7 +161,7 @@ pub async fn download_missing_symbols(
     cache_dir: &Path,
     pdb_dir: Option<&Path>,
     include_remote: bool,
-    quiet: bool,
+    verbosity: Verbosity,
 ) -> Result<()> {
     let symbols_dir = symbols_dir.to_path_buf();
     let cache_dir = cache_dir.to_path_buf();
@@ -129,9 +171,15 @@ pub async fn download_missing_symbols(
     let mut total = 0u32;
     let mut skipped = 0u32;
 
+    let overall = Instant::now();
+
     for m in modules.iter() {
-        let Some(debug_file) = m.debug_file() else { continue };
-        let Some(debug_id) = m.debug_identifier() else { continue };
+        let Some(debug_file) = m.debug_file() else {
+            continue;
+        };
+        let Some(debug_id) = m.debug_identifier() else {
+            continue;
+        };
 
         let pdb_name = Path::new(debug_file.as_ref())
             .file_name()
@@ -145,7 +193,14 @@ pub async fn download_missing_symbols(
             || sym_exists(&cache_dir, &pdb_name, &breakpad_id)
         {
             skipped += 1;
+            if verbosity == Verbosity::Verbose {
+                eprintln!("  [CACHED] {} / {}", pdb_name, breakpad_id);
+            }
             continue;
+        }
+
+        if verbosity == Verbosity::Verbose {
+            eprintln!("  [CHECK] {} / {}", pdb_name, breakpad_id);
         }
 
         // Check local PDB directory first
@@ -158,10 +213,10 @@ pub async fn download_missing_symbols(
                 let target_dir = cache.join(&name).join(&bid);
                 tasks.spawn(async move {
                     let _ = std::fs::create_dir_all(&target_dir);
-                    let result = dump_syms_convert(&target_dir, &local_pdb, &name, quiet);
+                    let result = dump_syms_convert(&target_dir, &local_pdb, &name, verbosity);
                     match &result {
                         Ok(()) => {
-                            if !quiet {
+                            if !verbosity.is_silent() {
                                 eprintln!(
                                     "  [OK] {}/{}/{}.sym",
                                     name,
@@ -171,7 +226,7 @@ pub async fn download_missing_symbols(
                             }
                         }
                         Err(e) => {
-                            if !quiet {
+                            if !verbosity.is_silent() {
                                 eprintln!("  [FAIL] {}: {}", name, e)
                             }
                         }
@@ -188,7 +243,7 @@ pub async fn download_missing_symbols(
             let name = pdb_name;
             let bid = breakpad_id;
             tasks.spawn(async move {
-                let result = download_and_convert(&cache, &name, &bid, quiet).await;
+                let result = download_and_convert(&cache, &name, &bid, verbosity).await;
                 (name, result)
             });
         }
@@ -202,7 +257,7 @@ pub async fn download_missing_symbols(
             match result {
                 Ok(()) => ok += 1,
                 Err(e) => {
-                    if !quiet {
+                    if !verbosity.is_silent() {
                         eprintln!("  [FAIL] {}: {}", pdb_name, e);
                     }
                     fail += 1;
@@ -211,11 +266,14 @@ pub async fn download_missing_symbols(
         }
     }
 
-    if !quiet {
+    if !verbosity.is_silent() {
         eprintln!(
             "\n符号获取完成: 总计={}, 成功={}, 跳过(已存在)={}, 失败={}",
             total, ok, skipped, fail
         );
+        if verbosity == Verbosity::Verbose {
+            eprintln!("总耗时: {:.1}s", overall.elapsed().as_secs_f32());
+        }
     }
     Ok(())
 }

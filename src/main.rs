@@ -1,10 +1,13 @@
 use anyhow::Result;
 use clap::Parser;
-use minidump_analyzer::analyze;
+use minidump_analyzer::{Verbosity, analyze};
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "minidump-analyzer", about = "Windows Minidump 崩溃堆栈解析工具")]
+#[command(
+    name = "minidump-analyzer",
+    about = "Windows Minidump 崩溃堆栈解析工具"
+)]
 struct Cli {
     /// Minidump (.dmp) 文件路径
     dmp_path: String,
@@ -46,8 +49,12 @@ struct Cli {
     output: Option<PathBuf>,
 
     /// 静默模式，不输出进度信息到 stderr
-    #[arg(short = 'q', long)]
+    #[arg(short = 'q', long, conflicts_with = "verbose")]
     quiet: bool,
+
+    /// 详细模式，输出额外调试信息（模块检查状态、耗时等）
+    #[arg(short = 'v', long, conflicts_with = "quiet")]
+    verbose: bool,
 }
 
 #[tokio::main]
@@ -57,7 +64,15 @@ async fn main() -> Result<()> {
     let show_all_threads = cli.full || cli.all_threads;
     let show_registers = cli.full || cli.registers;
 
-    if !cli.quiet {
+    let verbosity = if cli.quiet {
+        Verbosity::Quiet
+    } else if cli.verbose {
+        Verbosity::Verbose
+    } else {
+        Verbosity::Normal
+    };
+
+    if !verbosity.is_silent() {
         eprintln!("正在解析 Minidump: {}", cli.dmp_path);
     }
 
@@ -69,7 +84,7 @@ async fn main() -> Result<()> {
         cli.download_symbols,
         show_all_threads,
         show_registers,
-        cli.quiet,
+        verbosity,
     )
     .await?;
 
@@ -85,7 +100,7 @@ async fn main() -> Result<()> {
 
     if let Some(ref path) = cli.output {
         std::fs::write(path, &output)?;
-        if !cli.quiet {
+        if !verbosity.is_silent() {
             eprintln!("报告已保存: {}", path.display());
         }
     } else {

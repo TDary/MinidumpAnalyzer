@@ -1,8 +1,8 @@
-use minidump_analyzer::analyze;
+use minidump_analyzer::{Verbosity, analyze};
 use rmcp::handler::server::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{Implementation, ServerCapabilities, ServerInfo, ToolsCapability};
-use rmcp::{tool, tool_handler, tool_router, ServerHandler, ServiceExt};
+use rmcp::{ServerHandler, ServiceExt, tool, tool_handler, tool_router};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::path::PathBuf;
@@ -69,7 +69,9 @@ pub struct DownloadSymbolsInput {
 
 #[tool_router]
 impl MinidumpServer {
-    #[tool(description = "Analyze a Windows minidump (.dmp) crash file. Returns structured JSON with: system info (OS, CPU), exception details (code, address, reason), loaded modules with symbol status, and thread callstacks with resolved function names, source files, and line numbers.")]
+    #[tool(
+        description = "Analyze a Windows minidump (.dmp) crash file. Returns structured JSON with: system info (OS, CPU), exception details (code, address, reason), loaded modules with symbol status, and thread callstacks with resolved function names, source files, and line numbers."
+    )]
     async fn analyze_dump(&self, params: Parameters<AnalyzeDumpInput>) -> String {
         let symbols_path = PathBuf::from(&params.0.symbols_dir);
         let cache_path = PathBuf::from(&params.0.cache_dir);
@@ -83,7 +85,7 @@ impl MinidumpServer {
             false,
             params.0.all_threads,
             params.0.registers,
-            true,
+            Verbosity::Quiet,
         )
         .await
         {
@@ -95,14 +97,20 @@ impl MinidumpServer {
         }
     }
 
-    #[tool(description = "Download or convert missing PDB symbols for a minidump file. Resolves symbols from: 1) local PDB files (auto-converted via dump_syms), 2) Microsoft Symbol Server. Caches results for future use. Run this first if symbols are missing.")]
+    #[tool(
+        description = "Download or convert missing PDB symbols for a minidump file. Resolves symbols from: 1) local PDB files (auto-converted via dump_syms), 2) Microsoft Symbol Server. Caches results for future use. Run this first if symbols are missing."
+    )]
     async fn download_symbols(&self, params: Parameters<DownloadSymbolsInput>) -> String {
         let symbols_path = PathBuf::from(&params.0.symbols_dir);
         let cache_path = PathBuf::from(&params.0.cache_dir);
         let pdb_path = params.0.pdb_dir.as_ref().map(PathBuf::from);
 
-        if let Err(e) = minidump_analyzer::symbols::check_dump_syms() {
-            return format!("dump_syms not available: {e:#}. Install with: cargo install dump_syms");
+        if pdb_path.is_some() {
+            if let Err(e) = minidump_analyzer::symbols::check_dump_syms() {
+                return format!(
+                    "dump_syms not available: {e:#}. Install with: cargo install dump_syms"
+                );
+            }
         }
 
         match analyze(
@@ -113,7 +121,7 @@ impl MinidumpServer {
             true,
             false,
             false,
-            true,
+            Verbosity::Quiet,
         )
         .await
         {

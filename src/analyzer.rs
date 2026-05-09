@@ -1,6 +1,6 @@
 use minidump::{
-    MinidumpContext, MinidumpException, MinidumpModuleList, MinidumpRawContext,
-    MinidumpSystemInfo, Module,
+    MinidumpContext, MinidumpException, MinidumpModuleList, MinidumpRawContext, MinidumpSystemInfo,
+    Module,
 };
 use minidump_processor::ProcessState;
 use serde::Serialize;
@@ -86,12 +86,16 @@ pub(crate) fn exception_reason(code: u32) -> &'static str {
 
 // ── Register extraction ───────────────────────────────────────────────
 
-fn extract_arm64_regs(iregs: &[u64; 31], sp: u64, pc: u64, cpsr: impl Into<u64>) -> Vec<RegisterOutput> {
+fn extract_arm64_regs(
+    iregs: &[u64; 31],
+    sp: u64,
+    pc: u64,
+    cpsr: impl Into<u64>,
+) -> Vec<RegisterOutput> {
     const NAMES: [&str; 31] = [
-        "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7",
-        "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15",
-        "x16", "x17", "x18", "x19", "x20", "x21", "x22", "x23",
-        "x24", "x25", "x26", "x27", "x28", "fp", "lr",
+        "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11", "x12", "x13",
+        "x14", "x15", "x16", "x17", "x18", "x19", "x20", "x21", "x22", "x23", "x24", "x25", "x26",
+        "x27", "x28", "fp", "lr",
     ];
     let mut regs: Vec<(&str, u64)> = Vec::with_capacity(35);
     for (i, &val) in iregs.iter().enumerate() {
@@ -168,6 +172,7 @@ fn extract_registers(context: &MinidumpContext) -> Vec<RegisterOutput> {
 
 // ── Report builder ────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 pub fn build_report(
     sys_info: Option<MinidumpSystemInfo>,
     exception: Option<MinidumpException>,
@@ -213,9 +218,7 @@ pub fn build_report(
                                         .file_name()
                                         .map(|n| n.to_string_lossy().to_string())
                                 })
-                                .unwrap_or_else(|| {
-                                    debug_file.clone().unwrap_or_default()
-                                });
+                                .unwrap_or_else(|| debug_file.clone().unwrap_or_default());
                             let bid = symbols::guid_to_breakpad_id(&id.to_string());
                             let has = symbols::sym_exists(symbols_dir, &df, &bid)
                                 || symbols::sym_exists(cache_dir, &df, &bid);
@@ -248,7 +251,7 @@ pub fn build_report(
                     .filter(|f| {
                         f.function_name
                             .as_deref()
-                            .map_or(false, |n| !n.starts_with("<unknown") && !n.starts_with("<未知"))
+                            .is_some_and(|n| !n.starts_with("<unknown") && !n.starts_with("<未知"))
                     })
                     .enumerate()
                     .map(|(j, f)| FrameOutput {
@@ -263,7 +266,7 @@ pub fn build_report(
             };
 
             let registers = if is_crash && include_registers {
-                context.as_ref().map(|c| extract_registers(c))
+                context.as_ref().map(extract_registers)
             } else {
                 None
             };
@@ -287,7 +290,11 @@ pub fn build_report(
 
 // ── Text output ───────────────────────────────────────────────────────
 
-pub fn format_text(report: &CrashReport, include_all_threads: bool, include_registers: bool) -> String {
+pub fn format_text(
+    report: &CrashReport,
+    include_all_threads: bool,
+    include_registers: bool,
+) -> String {
     use std::fmt::Write;
 
     let mut out = String::new();
@@ -335,16 +342,14 @@ pub fn format_text(report: &CrashReport, include_all_threads: bool, include_regi
             let _ = writeln!(out, "\n--- 线程 #{} ---", thread.index);
         }
 
-        if include_registers {
-            if let Some(ref regs) = thread.registers {
-                let _ = writeln!(out, "  寄存器:");
-                for chunk in regs.chunks(4) {
-                    let line: Vec<String> = chunk
-                        .iter()
-                        .map(|r| format!("{:<6} {}", r.register, r.value))
-                        .collect();
-                    let _ = writeln!(out, "    {}", line.join("  "));
-                }
+        if include_registers && let Some(ref regs) = thread.registers {
+            let _ = writeln!(out, "  寄存器:");
+            for chunk in regs.chunks(4) {
+                let line: Vec<String> = chunk
+                    .iter()
+                    .map(|r| format!("{:<6} {}", r.register, r.value))
+                    .collect();
+                let _ = writeln!(out, "    {}", line.join("  "));
             }
         }
 
@@ -359,18 +364,22 @@ pub fn format_text(report: &CrashReport, include_all_threads: bool, include_regi
                 (Some(f), _) => f.clone(),
                 _ => "<未知位置>".to_string(),
             };
-            let _ = writeln!(out, "#{:>2} {:<50} ({})", frame.index, frame.function, location);
+            let _ = writeln!(
+                out,
+                "#{:>2} {:<50} ({})",
+                frame.index, frame.function, location
+            );
         }
     }
 
     if !include_all_threads {
-        let other_count = report
-            .threads
-            .iter()
-            .filter(|t| !t.is_crash_thread)
-            .count();
+        let other_count = report.threads.iter().filter(|t| !t.is_crash_thread).count();
         if other_count > 0 {
-            let _ = writeln!(out, "\n其他 {} 个线程的调用栈 (使用 --all-threads 查看)", other_count);
+            let _ = writeln!(
+                out,
+                "\n其他 {} 个线程的调用栈 (使用 --all-threads 查看)",
+                other_count
+            );
         }
     }
 
