@@ -83,6 +83,7 @@ impl MinidumpServer {
             false,
             params.0.all_threads,
             params.0.registers,
+            true,
         )
         .await
         {
@@ -109,9 +110,10 @@ impl MinidumpServer {
             &symbols_path,
             &cache_path,
             pdb_path.as_deref(),
-            true, // download_only
+            true,
             false,
             false,
+            true,
         )
         .await
         {

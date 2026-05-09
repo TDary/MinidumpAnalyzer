@@ -69,7 +69,7 @@ pub struct FrameOutput {
 
 // ── Exception reason mapping ──────────────────────────────────────────
 
-fn exception_reason(code: u32) -> &'static str {
+pub(crate) fn exception_reason(code: u32) -> &'static str {
     match code {
         0xC0000005 => "ACCESS_VIOLATION",
         0xC0000094 => "INT_DIVIDE_BY_ZERO",
@@ -85,6 +85,28 @@ fn exception_reason(code: u32) -> &'static str {
 }
 
 // ── Register extraction ───────────────────────────────────────────────
+
+fn extract_arm64_regs(iregs: &[u64; 31], sp: u64, pc: u64, cpsr: impl Into<u64>) -> Vec<RegisterOutput> {
+    const NAMES: [&str; 31] = [
+        "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7",
+        "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15",
+        "x16", "x17", "x18", "x19", "x20", "x21", "x22", "x23",
+        "x24", "x25", "x26", "x27", "x28", "fp", "lr",
+    ];
+    let mut regs: Vec<(&str, u64)> = Vec::with_capacity(35);
+    for (i, &val) in iregs.iter().enumerate() {
+        regs.push((NAMES[i], val));
+    }
+    regs.push(("sp", sp));
+    regs.push(("pc", pc));
+    regs.push(("cpsr", cpsr.into()));
+    regs.into_iter()
+        .map(|(name, val)| RegisterOutput {
+            register: name.to_string(),
+            value: format!("0x{:016X}", val),
+        })
+        .collect()
+}
 
 fn extract_registers(context: &MinidumpContext) -> Vec<RegisterOutput> {
     use MinidumpRawContext::*;
@@ -138,6 +160,8 @@ fn extract_registers(context: &MinidumpContext) -> Vec<RegisterOutput> {
                 })
                 .collect()
         }
+        Arm64(ctx) => extract_arm64_regs(&ctx.iregs, ctx.sp, ctx.pc, ctx.cpsr),
+        OldArm64(ctx) => extract_arm64_regs(&ctx.iregs, ctx.sp, ctx.pc, ctx.cpsr),
         _ => vec![],
     }
 }

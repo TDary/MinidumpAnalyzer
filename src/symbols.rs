@@ -26,11 +26,13 @@ pub fn sym_exists(cache_dir: &Path, pdb_name: &str, breakpad_id: &str) -> bool {
         .exists()
 }
 
-fn dump_syms_convert(target_dir: &Path, pdb_path: &Path, pdb_name: &str) -> Result<()> {
+fn dump_syms_convert(target_dir: &Path, pdb_path: &Path, pdb_name: &str, quiet: bool) -> Result<()> {
     let tmp_pdb = target_dir.join(pdb_name);
     std::fs::copy(pdb_path, &tmp_pdb)?;
 
-    eprintln!("  [CONVERT] {} ...", pdb_name);
+    if !quiet {
+        eprintln!("  [CONVERT] {} ...", pdb_name);
+    }
     let output = Command::new("dump_syms")
         .arg(&tmp_pdb)
         .output()
@@ -48,13 +50,15 @@ fn dump_syms_convert(target_dir: &Path, pdb_path: &Path, pdb_name: &str) -> Resu
     Ok(())
 }
 
-async fn download_and_convert(cache_dir: &Path, pdb_name: &str, breakpad_id: &str) -> Result<()> {
+async fn download_and_convert(cache_dir: &Path, pdb_name: &str, breakpad_id: &str, quiet: bool) -> Result<()> {
     let sym_name = pdb_name.replace(".pdb", ".sym");
     let target_dir = cache_dir.join(pdb_name).join(breakpad_id);
     let target_file = target_dir.join(&sym_name);
 
     if target_file.exists() {
-        eprintln!("  [SKIP] {} (已存在)", pdb_name);
+        if !quiet {
+            eprintln!("  [SKIP] {} (已存在)", pdb_name);
+        }
         return Ok(());
     }
 
@@ -65,13 +69,18 @@ async fn download_and_convert(cache_dir: &Path, pdb_name: &str, breakpad_id: &st
         MICROSOFT_SYMBOL_SERVER, pdb_name, breakpad_id, pdb_name
     );
 
-    eprintln!("  [DOWNLOAD] {} ...", pdb_name);
+    if !quiet {
+        eprintln!("  [DOWNLOAD] {} ...", pdb_name);
+    }
     let resp = reqwest::get(&url)
         .await
         .with_context(|| format!("下载失败: {}", url))?;
 
     if !resp.status().is_success() {
-        anyhow::bail!("HTTP {}: 符号可能不存在", resp.status());
+        if !quiet {
+            eprintln!("  [SKIP] {} (HTTP {}, 符号可能不存在)", pdb_name, resp.status());
+        }
+        return Ok(());
     }
 
     let pdb_data = resp.bytes().await?;
@@ -82,7 +91,9 @@ async fn download_and_convert(cache_dir: &Path, pdb_name: &str, breakpad_id: &st
     let tmp_pdb = target_dir.join(pdb_name);
     std::fs::write(&tmp_pdb, &pdb_data)?;
 
-    eprintln!("  [CONVERT] {} ...", pdb_name);
+    if !quiet {
+        eprintln!("  [CONVERT] {} ...", pdb_name);
+    }
     let output = Command::new("dump_syms")
         .arg(&tmp_pdb)
         .output()
@@ -96,7 +107,9 @@ async fn download_and_convert(cache_dir: &Path, pdb_name: &str, breakpad_id: &st
     }
 
     std::fs::write(&target_file, &output.stdout)?;
-    eprintln!("  [OK] {}", target_file.display());
+    if !quiet {
+        eprintln!("  [OK] {}", target_file.display());
+    }
     Ok(())
 }
 
@@ -106,6 +119,7 @@ pub async fn download_missing_symbols(
     cache_dir: &Path,
     pdb_dir: Option<&Path>,
     include_remote: bool,
+    quiet: bool,
 ) -> Result<()> {
     let symbols_dir = symbols_dir.to_path_buf();
     let cache_dir = cache_dir.to_path_buf();
@@ -144,15 +158,23 @@ pub async fn download_missing_symbols(
                 let target_dir = cache.join(&name).join(&bid);
                 tasks.spawn(async move {
                     let _ = std::fs::create_dir_all(&target_dir);
-                    let result = dump_syms_convert(&target_dir, &local_pdb, &name);
+                    let result = dump_syms_convert(&target_dir, &local_pdb, &name, quiet);
                     match &result {
-                        Ok(()) => eprintln!(
-                            "  [OK] {}/{}/{}.sym",
-                            name,
-                            bid,
-                            name.replace(".pdb", "")
-                        ),
-                        Err(e) => eprintln!("  [FAIL] {}: {}", name, e),
+                        Ok(()) => {
+                            if !quiet {
+                                eprintln!(
+                                    "  [OK] {}/{}/{}.sym",
+                                    name,
+                                    bid,
+                                    name.replace(".pdb", "")
+                                )
+                            }
+                        }
+                        Err(e) => {
+                            if !quiet {
+                                eprintln!("  [FAIL] {}: {}", name, e)
+                            }
+                        }
                     }
                     (name, result)
                 });
@@ -166,7 +188,7 @@ pub async fn download_missing_symbols(
             let name = pdb_name;
             let bid = breakpad_id;
             tasks.spawn(async move {
-                let result = download_and_convert(&cache, &name, &bid).await;
+                let result = download_and_convert(&cache, &name, &bid, quiet).await;
                 (name, result)
             });
         }
@@ -180,16 +202,20 @@ pub async fn download_missing_symbols(
             match result {
                 Ok(()) => ok += 1,
                 Err(e) => {
-                    eprintln!("  [FAIL] {}: {}", pdb_name, e);
+                    if !quiet {
+                        eprintln!("  [FAIL] {}: {}", pdb_name, e);
+                    }
                     fail += 1;
                 }
             }
         }
     }
 
-    eprintln!(
-        "\n符号获取完成: 总计={}, 成功={}, 跳过(已存在)={}, 失败={}",
-        total, ok, skipped, fail
-    );
+    if !quiet {
+        eprintln!(
+            "\n符号获取完成: 总计={}, 成功={}, 跳过(已存在)={}, 失败={}",
+            total, ok, skipped, fail
+        );
+    }
     Ok(())
 }

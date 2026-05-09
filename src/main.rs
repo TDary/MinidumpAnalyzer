@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
-use minidump_analyzer::{analyze, symbols};
+use minidump_analyzer::analyze;
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -44,18 +44,22 @@ struct Cli {
     /// 将报告写入文件（文本或 JSON），不指定则输出到 stdout
     #[arg(short = 'o', long)]
     output: Option<PathBuf>,
+
+    /// 静默模式，不输出进度信息到 stderr
+    #[arg(short = 'q', long)]
+    quiet: bool,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    symbols::check_dump_syms()?;
-
     let show_all_threads = cli.full || cli.all_threads;
     let show_registers = cli.full || cli.registers;
 
-    eprintln!("正在解析 Minidump: {}", cli.dmp_path);
+    if !cli.quiet {
+        eprintln!("正在解析 Minidump: {}", cli.dmp_path);
+    }
 
     let report = analyze(
         &cli.dmp_path,
@@ -65,6 +69,7 @@ async fn main() -> Result<()> {
         cli.download_symbols,
         show_all_threads,
         show_registers,
+        cli.quiet,
     )
     .await?;
 
@@ -80,7 +85,9 @@ async fn main() -> Result<()> {
 
     if let Some(ref path) = cli.output {
         std::fs::write(path, &output)?;
-        eprintln!("报告已保存: {}", path.display());
+        if !cli.quiet {
+            eprintln!("报告已保存: {}", path.display());
+        }
     } else {
         print!("{output}");
     }

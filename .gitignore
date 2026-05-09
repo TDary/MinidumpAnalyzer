@@ -1,2 +1,7 @@
 /target
 /sym_cache
+*.dmp
+*.sym
+.DS_Store
+Thumbs.db
+Cargo.lock
