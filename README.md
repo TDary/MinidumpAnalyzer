@@ -27,6 +27,28 @@ cargo build --release
 - `--all-threads` 输出所有线程的调用栈
 - `--json` 输出结构化 JSON
 
+## MCP Server
+
+可以将分析能力暴露为 MCP 工具，让 Claude Code 直接调用：
+
+```bash
+# 1. 构建
+cargo build --release -p minidump-analyzer-mcp
+
+# 2. 注册到 Claude Code
+claude mcp add --transport stdio minidump-analyzer -- \
+  e:/MinidumpAnalyzer/target/release/minidump-analyzer-mcp.exe
+```
+
+注册后 Claude 可直接调用两个工具：
+
+| 工具 | 功能 |
+| ---- | ---- |
+| `analyze_dump` | 解析 .dmp，返回 JSON 报告（系统信息、异常、模块、线程调用栈、寄存器） |
+| `download_symbols` | 预取符号：本地 PDB 自动转换 + Microsoft Symbol Server 下载 |
+
+Skill 文件（[.claude/skills/minidump-analyzer.md](.claude/skills/minidump-analyzer.md)）提供崩溃诊断领域知识，Claude 会自动加载。
+
 ## 依赖
 
 - [Rust](https://www.rust-lang.org/) (stable)

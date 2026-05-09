@@ -1,7 +1,14 @@
+[workspace]
+members = [".", "mcp"]
+
 [package]
 name = "minidump-analyzer"
 version = "0.1.0"
 edition = "2024"
+
+[lib]
+name = "minidump_analyzer"
+path = "src/lib.rs"
 
 [dependencies]
 minidump = "0.16"

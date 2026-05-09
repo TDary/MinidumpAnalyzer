@@ -1,15 +1,7 @@
-mod analyzer;
-mod symbols;
-
 use anyhow::Result;
 use clap::Parser;
-use minidump::{
-    Minidump, MinidumpException, MinidumpMiscInfo, MinidumpModuleList, MinidumpSystemInfo,
-};
-use minidump_processor::{http_symbol_supplier, MultiSymbolProvider, Symbolizer};
+use minidump_analyzer::{analyze, symbols};
 use std::path::PathBuf;
-
-const MICROSOFT_SYMBOL_SERVER: &str = "https://msdl.microsoft.com/download/symbols";
 
 #[derive(Parser)]
 #[command(name = "minidump-analyzer", about = "Windows Minidump 崩溃堆栈解析工具")]
@@ -65,74 +57,25 @@ async fn main() -> Result<()> {
 
     eprintln!("正在解析 Minidump: {}", cli.dmp_path);
 
-    let dump = Minidump::read_path(&cli.dmp_path)?;
-
-    let sys_info = dump.get_stream::<MinidumpSystemInfo>().ok();
-    let modules = dump.get_stream::<MinidumpModuleList>().ok();
-    let exception = dump.get_stream::<MinidumpException>().ok();
-    let misc_info = dump.get_stream::<MinidumpMiscInfo>().ok();
-
-    let context = if show_registers {
-        exception
-            .as_ref()
-            .and_then(|exc| sys_info.as_ref().and_then(|si| exc.context(si, misc_info.as_ref())))
-            .map(|cow| cow.into_owned())
-    } else {
-        None
-    };
-
-    // Symbol prefetch: local PDB conversion + optional Microsoft download
-    if cli.download_symbols || cli.pdb_dir.is_some() {
-        eprintln!("\n--- 获取缺失符号 ---");
-        if let Some(ref mods) = modules {
-            symbols::download_missing_symbols(
-                mods,
-                &cli.symbols_dir,
-                &cli.cache_dir,
-                cli.pdb_dir.as_deref(),
-                cli.download_symbols,
-            )
-            .await?;
-        }
-        if cli.download_symbols {
-            return Ok(());
-        }
-    }
-
-    // Symbol resolution
-    let symbol_paths = vec![cli.symbols_dir.clone(), cli.cache_dir.clone()];
-    let symbol_urls = vec![MICROSOFT_SYMBOL_SERVER.to_string()];
-    let symbols_cache = cli.cache_dir.clone();
-    let symbols_tmp = std::env::temp_dir();
-    let timeout = std::time::Duration::from_secs(120);
-
-    let supplier =
-        http_symbol_supplier(symbol_paths, symbol_urls, symbols_cache, symbols_tmp, timeout);
-    let symbolizer = Symbolizer::new(supplier);
-
-    let mut provider = MultiSymbolProvider::new();
-    provider.add(Box::new(symbolizer));
-
-    let state = minidump_processor::process_minidump(&dump, &provider).await?;
-
-    // Build report
-    let report = analyzer::build_report(
-        sys_info,
-        exception,
-        modules,
-        context,
-        &state,
+    let report = analyze(
+        &cli.dmp_path,
         &cli.symbols_dir,
         &cli.cache_dir,
+        cli.pdb_dir.as_deref(),
+        cli.download_symbols,
         show_all_threads,
         show_registers,
-    );
+    )
+    .await?;
 
-    // Output
+    if cli.download_symbols {
+        return Ok(());
+    }
+
     let output = if cli.json {
         serde_json::to_string_pretty(&report)?
     } else {
-        analyzer::format_text(&report, show_all_threads, show_registers)
+        minidump_analyzer::analyzer::format_text(&report, show_all_threads, show_registers)
     };
 
     if let Some(ref path) = cli.output {
