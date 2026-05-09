@@ -376,3 +376,32 @@ pub fn format_text(report: &CrashReport, include_all_threads: bool, include_regi
 
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_arm64_regs() {
+        let mut iregs = [0u64; 31];
+        iregs[0] = 0xDEADBEEF; // x0
+        iregs[29] = 0xCAFE; // fp (x29)
+        iregs[30] = 0xBABE; // lr (x30)
+
+        let regs = extract_arm64_regs(&iregs, 0x1000, 0x2000, 0x60000000u32);
+
+        assert_eq!(regs.len(), 34); // 31 iregs + sp + pc + cpsr
+        assert_eq!(regs[0].register, "x0");
+        assert_eq!(regs[0].value, "0x00000000DEADBEEF");
+        assert_eq!(regs[29].register, "fp");
+        assert_eq!(regs[29].value, "0x000000000000CAFE");
+        assert_eq!(regs[30].register, "lr");
+        assert_eq!(regs[30].value, "0x000000000000BABE");
+        assert_eq!(regs[31].register, "sp");
+        assert_eq!(regs[31].value, "0x0000000000001000");
+        assert_eq!(regs[32].register, "pc");
+        assert_eq!(regs[32].value, "0x0000000000002000");
+        assert_eq!(regs[33].register, "cpsr");
+        assert_eq!(regs[33].value, "0x0000000060000000");
+    }
+}
