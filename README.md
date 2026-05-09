@@ -1,0 +1,2 @@
+# MinidumpAnalyzer
+一种用于Minidump文件的宕机堆栈解析器
