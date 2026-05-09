@@ -25,7 +25,11 @@ struct Cli {
     #[arg(short = 'c', long, default_value = "./sym_cache")]
     cache_dir: PathBuf,
 
-    /// 仅下载缺失符号，不解析 dmp
+    /// 本地 PDB 文件目录，自动用 dump_syms 转换
+    #[arg(short = 'p', long)]
+    pdb_dir: Option<PathBuf>,
+
+    /// 仅下载/转换缺失符号，不解析 dmp
     #[arg(long)]
     download_symbols: bool,
 
@@ -50,18 +54,19 @@ struct Cli {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    let dmp_path = &cli.dmp_path;
-
     let show_all_threads = cli.full || cli.all_threads;
     let show_registers = cli.full || cli.registers;
 
     if !cli.json {
-        println!("正在解析 Minidump: {}", dmp_path);
+        println!("正在解析 Minidump: {}", cli.dmp_path);
         println!("符号目录: {}", cli.symbols_dir.display());
         println!("缓存目录: {}", cli.cache_dir.display());
+        if let Some(ref pdb) = cli.pdb_dir {
+            println!("PDB 目录: {}", pdb.display());
+        }
     }
 
-    let dump = Minidump::read_path(&dmp_path)?;
+    let dump = Minidump::read_path(&cli.dmp_path)?;
 
     let sys_info = dump.get_stream::<MinidumpSystemInfo>().ok();
     let modules = dump.get_stream::<MinidumpModuleList>().ok();
@@ -118,17 +123,26 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Download-only mode
-    if cli.download_symbols {
-        println!("\n--- 下载缺失符号 ---");
+    // Symbol prefetch: local PDB conversion + optional Microsoft download
+    if cli.download_symbols || cli.pdb_dir.is_some() {
+        println!("\n--- 获取缺失符号 ---");
         if let Some(ref mods) = modules {
-            symbols::download_missing_symbols(mods, &cli.symbols_dir, &cli.cache_dir).await?;
+            symbols::download_missing_symbols(
+                mods,
+                &cli.symbols_dir,
+                &cli.cache_dir,
+                cli.pdb_dir.as_deref(),
+                cli.download_symbols,
+            )
+            .await?;
         }
-        return Ok(());
+        if cli.download_symbols {
+            return Ok(());
+        }
     }
 
     // Symbol resolution
-    let symbol_paths = vec![cli.symbols_dir.clone()];
+    let symbol_paths = vec![cli.symbols_dir.clone(), cli.cache_dir.clone()];
     let symbol_urls = vec![MICROSOFT_SYMBOL_SERVER.to_string()];
     let symbols_cache = cli.cache_dir.clone();
     let symbols_tmp = std::env::temp_dir();
