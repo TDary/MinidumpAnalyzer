@@ -1,14 +1,36 @@
 pub mod analyzer;
+pub mod channel;
 pub mod symbols;
 
 use anyhow::Result;
-use minidump::{
-    Minidump, MinidumpException, MinidumpMiscInfo, MinidumpModuleList, MinidumpSystemInfo,
-};
-use minidump_processor::{MultiSymbolProvider, Symbolizer, http_symbol_supplier};
+use serde::Serialize;
 use std::path::Path;
+use std::str::FromStr;
 
-const MICROSOFT_SYMBOL_SERVER: &str = "https://msdl.microsoft.com/download/symbols";
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize)]
+pub enum Channel {
+    #[serde(rename = "pc")]
+    Pc,
+    #[serde(rename = "android")]
+    Android,
+    #[serde(rename = "ios")]
+    Ios,
+}
+
+impl FromStr for Channel {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "pc" | "windows" | "win" => Ok(Self::Pc),
+            "android" | "aos" => Ok(Self::Android),
+            "ios" => Ok(Self::Ios),
+            _ => Err(format!(
+                "不支持的渠道: \"{s}\"，可选: pc (windows/win), android (aos), ios"
+            )),
+        }
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Verbosity {
@@ -33,85 +55,20 @@ pub async fn analyze(
     include_all_threads: bool,
     include_registers: bool,
     verbosity: Verbosity,
+    channel: Channel,
 ) -> Result<analyzer::CrashReport> {
-    let dump = Minidump::read_path(dmp_path)?;
-
-    let sys_info = dump.get_stream::<MinidumpSystemInfo>().ok();
-    let modules = dump.get_stream::<MinidumpModuleList>().ok();
-    let exception = dump.get_stream::<MinidumpException>().ok();
-    let misc_info = dump.get_stream::<MinidumpMiscInfo>().ok();
-
-    let context = if include_registers {
-        exception
-            .as_ref()
-            .and_then(|exc| {
-                sys_info
-                    .as_ref()
-                    .and_then(|si| exc.context(si, misc_info.as_ref()))
-            })
-            .map(|cow| cow.into_owned())
-    } else {
-        None
-    };
-
-    // Symbol prefetch
-    if download_only || pdb_dir.is_some() {
-        if let Some(ref mods) = modules {
-            symbols::download_missing_symbols(
-                mods,
-                symbols_dir,
-                cache_dir,
-                pdb_dir,
-                download_only && pdb_dir.is_none(),
-                verbosity,
-            )
-            .await?;
-        }
-        if download_only {
-            // Return empty report — caller only wanted symbols
-            return Ok(analyzer::CrashReport {
-                system_info: None,
-                exception: None,
-                modules: vec![],
-                threads: vec![],
-            });
-        }
-    }
-
-    // Symbol resolution
-    let symbol_paths = vec![symbols_dir.to_path_buf(), cache_dir.to_path_buf()];
-    let symbol_urls = vec![MICROSOFT_SYMBOL_SERVER.to_string()];
-    let symbols_cache = cache_dir.to_path_buf();
-    let symbols_tmp = std::env::temp_dir();
-    let timeout = std::time::Duration::from_secs(120);
-
-    let supplier = http_symbol_supplier(
-        symbol_paths,
-        symbol_urls,
-        symbols_cache,
-        symbols_tmp,
-        timeout,
-    );
-    let symbolizer = Symbolizer::new(supplier);
-
-    let mut provider = MultiSymbolProvider::new();
-    provider.add(Box::new(symbolizer));
-
-    let state = minidump_processor::process_minidump(&dump, &provider).await?;
-
-    let report = analyzer::build_report(
-        sys_info,
-        exception,
-        modules,
-        context,
-        &state,
+    channel::analyze_by_channel(
+        dmp_path,
         symbols_dir,
         cache_dir,
+        pdb_dir,
+        download_only,
         include_all_threads,
         include_registers,
-    );
-
-    Ok(report)
+        verbosity,
+        channel,
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -143,16 +100,13 @@ mod tests {
         let tmp = std::env::temp_dir().join("test_sym_cache");
         let pdb = "test.pdb";
         let id = "ABC123";
-        // Doesn't exist yet
         assert!(!symbols::sym_exists(&tmp, pdb, id));
 
-        // Create it
         let sym_dir = tmp.join(pdb).join(id);
         std::fs::create_dir_all(&sym_dir).unwrap();
         std::fs::write(sym_dir.join("test.sym"), b"MODULE windows x86 ABC123 test").unwrap();
         assert!(symbols::sym_exists(&tmp, pdb, id));
 
-        // Clean up
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }

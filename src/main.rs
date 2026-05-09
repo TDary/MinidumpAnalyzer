@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
-use minidump_analyzer::{Verbosity, analyze};
+use minidump_analyzer::{Channel, Verbosity, analyze};
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -55,6 +55,10 @@ struct Cli {
     /// 详细模式，输出额外调试信息（模块检查状态、耗时等）
     #[arg(short = 'v', long, conflicts_with = "quiet")]
     verbose: bool,
+
+    /// 渠道: pc (默认), android, ios
+    #[arg(long, default_value = "pc")]
+    channel: String,
 }
 
 #[tokio::main]
@@ -76,6 +80,11 @@ async fn main() -> Result<()> {
         eprintln!("正在解析 Minidump: {}", cli.dmp_path);
     }
 
+    let channel: Channel = cli
+        .channel
+        .parse()
+        .map_err(|e: String| anyhow::anyhow!("{e}"))?;
+
     let report = analyze(
         &cli.dmp_path,
         &cli.symbols_dir,
@@ -85,6 +94,7 @@ async fn main() -> Result<()> {
         show_all_threads,
         show_registers,
         verbosity,
+        channel,
     )
     .await?;
 

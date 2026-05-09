@@ -6,12 +6,14 @@ use minidump_processor::ProcessState;
 use serde::Serialize;
 use std::path::Path;
 
+use crate::Channel;
 use crate::symbols;
 
 // ── Output data structures ────────────────────────────────────────────
 
 #[derive(Serialize)]
 pub struct CrashReport {
+    pub channel: Channel,
     pub system_info: Option<SystemInfoOutput>,
     pub exception: Option<ExceptionOutput>,
     pub modules: Vec<ModuleOutput>,
@@ -183,6 +185,7 @@ pub fn build_report(
     cache_dir: &Path,
     include_all_threads: bool,
     include_registers: bool,
+    channel: Channel,
 ) -> CrashReport {
     let system_info = sys_info.map(|s| SystemInfoOutput {
         os: format!("{:?}", s.os),
@@ -281,6 +284,7 @@ pub fn build_report(
         .collect();
 
     CrashReport {
+        channel,
         system_info,
         exception,
         modules,
@@ -298,6 +302,9 @@ pub fn format_text(
     use std::fmt::Write;
 
     let mut out = String::new();
+
+    // Channel
+    let _ = writeln!(out, "渠道: {:?}", report.channel);
 
     // System info
     if let Some(ref si) = report.system_info {

@@ -1,4 +1,4 @@
-use minidump_analyzer::{Verbosity, analyze};
+use minidump_analyzer::{Channel, Verbosity, analyze};
 use rmcp::handler::server::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{Implementation, ServerCapabilities, ServerInfo, ToolsCapability};
@@ -42,6 +42,13 @@ pub struct AnalyzeDumpInput {
     /// Include crash thread register context (default: false)
     #[serde(default)]
     pub registers: bool,
+    /// Platform channel: pc (default), android, ios
+    #[serde(default = "default_channel")]
+    pub channel: String,
+}
+
+fn default_channel() -> String {
+    "pc".to_string()
 }
 
 fn default_symbols_dir() -> String {
@@ -63,6 +70,9 @@ pub struct DownloadSymbolsInput {
     pub cache_dir: String,
     /// Local PDB directory for auto-conversion
     pub pdb_dir: Option<String>,
+    /// Platform channel: pc (default), android, ios
+    #[serde(default = "default_channel")]
+    pub channel: String,
 }
 
 // ── Tools ───────────────────────────────────────────────────────────
@@ -77,6 +87,11 @@ impl MinidumpServer {
         let cache_path = PathBuf::from(&params.0.cache_dir);
         let pdb_path = params.0.pdb_dir.as_ref().map(PathBuf::from);
 
+        let channel: Channel = match params.0.channel.parse() {
+            Ok(c) => c,
+            Err(e) => return e,
+        };
+
         match analyze(
             &params.0.dmp_path,
             &symbols_path,
@@ -86,6 +101,7 @@ impl MinidumpServer {
             params.0.all_threads,
             params.0.registers,
             Verbosity::Quiet,
+            channel,
         )
         .await
         {
@@ -105,6 +121,11 @@ impl MinidumpServer {
         let cache_path = PathBuf::from(&params.0.cache_dir);
         let pdb_path = params.0.pdb_dir.as_ref().map(PathBuf::from);
 
+        let channel: Channel = match params.0.channel.parse() {
+            Ok(c) => c,
+            Err(e) => return e,
+        };
+
         if pdb_path.is_some() {
             if let Err(e) = minidump_analyzer::symbols::check_dump_syms() {
                 return format!(
@@ -122,6 +143,7 @@ impl MinidumpServer {
             false,
             false,
             Verbosity::Quiet,
+            channel,
         )
         .await
         {
