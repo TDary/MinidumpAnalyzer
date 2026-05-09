@@ -52,6 +52,10 @@ minidump-analyzer --all-threads crash.dmp        # 所有线程调用栈
 minidump-analyzer --registers crash.dmp          # 崩溃线程寄存器
 minidump-analyzer --full crash.dmp               # = --all-threads --registers
 minidump-analyzer --json --full crash.dmp        # JSON 格式完整输出
+
+# 生成报告文件
+minidump-analyzer --full -o report.txt crash.dmp
+minidump-analyzer --json --full -o report.json crash.dmp
 ```
 
 ### 选项
@@ -66,6 +70,7 @@ minidump-analyzer --json --full crash.dmp        # JSON 格式完整输出
 | `--registers` | 输出崩溃线程的寄存器上下文 |
 | `--full` | 等价于 `--all-threads --registers` |
 | `--json` | 以 JSON 格式输出分析结果 |
+| `-o, --output <路径>` | 将报告写入文件，不指定则输出到 stdout |
 | `-h, --help` | 显示帮助 |
 
 ### 符号目录说明

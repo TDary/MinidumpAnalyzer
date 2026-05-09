@@ -4,7 +4,7 @@ mod symbols;
 use anyhow::Result;
 use clap::Parser;
 use minidump::{
-    Minidump, MinidumpException, MinidumpMiscInfo, MinidumpModuleList, MinidumpSystemInfo, Module,
+    Minidump, MinidumpException, MinidumpMiscInfo, MinidumpModuleList, MinidumpSystemInfo,
 };
 use minidump_processor::{http_symbol_supplier, MultiSymbolProvider, Symbolizer};
 use std::path::PathBuf;
@@ -48,23 +48,22 @@ struct Cli {
     /// 以 JSON 格式输出分析结果
     #[arg(long)]
     json: bool,
+
+    /// 将报告写入文件（文本或 JSON），不指定则输出到 stdout
+    #[arg(short = 'o', long)]
+    output: Option<PathBuf>,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
+    symbols::check_dump_syms()?;
+
     let show_all_threads = cli.full || cli.all_threads;
     let show_registers = cli.full || cli.registers;
 
-    if !cli.json {
-        println!("正在解析 Minidump: {}", cli.dmp_path);
-        println!("符号目录: {}", cli.symbols_dir.display());
-        println!("缓存目录: {}", cli.cache_dir.display());
-        if let Some(ref pdb) = cli.pdb_dir {
-            println!("PDB 目录: {}", pdb.display());
-        }
-    }
+    eprintln!("正在解析 Minidump: {}", cli.dmp_path);
 
     let dump = Minidump::read_path(&cli.dmp_path)?;
 
@@ -82,50 +81,9 @@ async fn main() -> Result<()> {
         None
     };
 
-    // Print system info (text mode only)
-    if !cli.json {
-        if let Some(ref si) = sys_info {
-            println!("--- 系统信息 ---");
-            println!("操作系统: {:?}", si.os);
-            println!("CPU 架构: {:?}", si.cpu);
-        }
-    }
-
-    // Print module list (text mode only)
-    if !cli.json {
-        println!("\n--- 模块列表 ---");
-        if let Some(ref mods) = modules {
-            for m in mods.iter() {
-                let name = PathBuf::from(m.code_file().as_ref())
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| m.code_file().to_string());
-                if let Some(debug_id) = m.debug_identifier() {
-                    let debug_file = m.debug_file().map(|d| d.to_string()).unwrap_or_default();
-                    let pdb_leaf = std::path::Path::new(&debug_file)
-                        .file_name()
-                        .map(|n| n.to_string_lossy().to_string())
-                        .unwrap_or_else(|| debug_file.clone());
-                    let breakpad_id = symbols::guid_to_breakpad_id(&debug_id.to_string());
-                    let has_sym = symbols::sym_exists(&cli.symbols_dir, &pdb_leaf, &breakpad_id)
-                        || symbols::sym_exists(&cli.cache_dir, &pdb_leaf, &breakpad_id);
-                    println!(
-                        "  {:<40} {:<30} {}{}",
-                        name,
-                        pdb_leaf,
-                        breakpad_id,
-                        if has_sym { " [sym]" } else { "" }
-                    );
-                } else {
-                    println!("  {:<40} <无调试信息>", name);
-                }
-            }
-        }
-    }
-
     // Symbol prefetch: local PDB conversion + optional Microsoft download
     if cli.download_symbols || cli.pdb_dir.is_some() {
-        println!("\n--- 获取缺失符号 ---");
+        eprintln!("\n--- 获取缺失符号 ---");
         if let Some(ref mods) = modules {
             symbols::download_missing_symbols(
                 mods,
@@ -171,10 +129,17 @@ async fn main() -> Result<()> {
     );
 
     // Output
-    if cli.json {
-        println!("{}", serde_json::to_string_pretty(&report)?);
+    let output = if cli.json {
+        serde_json::to_string_pretty(&report)?
     } else {
-        analyzer::print_text(&report, show_all_threads, show_registers);
+        analyzer::format_text(&report, show_all_threads, show_registers)
+    };
+
+    if let Some(ref path) = cli.output {
+        std::fs::write(path, &output)?;
+        eprintln!("报告已保存: {}", path.display());
+    } else {
+        print!("{output}");
     }
 
     Ok(())

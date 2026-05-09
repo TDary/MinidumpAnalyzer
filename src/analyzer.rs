@@ -263,34 +263,38 @@ pub fn build_report(
 
 // ── Text output ───────────────────────────────────────────────────────
 
-pub fn print_text(report: &CrashReport, include_all_threads: bool, include_registers: bool) {
+pub fn format_text(report: &CrashReport, include_all_threads: bool, include_registers: bool) -> String {
+    use std::fmt::Write;
+
+    let mut out = String::new();
+
     // System info
     if let Some(ref si) = report.system_info {
-        println!("--- 系统信息 ---");
-        println!("操作系统: {}", si.os);
-        println!("CPU 架构: {}", si.cpu);
+        let _ = writeln!(out, "--- 系统信息 ---");
+        let _ = writeln!(out, "操作系统: {}", si.os);
+        let _ = writeln!(out, "CPU 架构: {}", si.cpu);
     }
 
     // Exception
     if let Some(ref exc) = report.exception {
-        println!("\n--- 异常信息 ---");
-        println!("异常码:  {}", exc.code);
-        println!("异常地址: {}", exc.address);
+        let _ = writeln!(out, "\n--- 异常信息 ---");
+        let _ = writeln!(out, "异常码:  {}", exc.code);
+        let _ = writeln!(out, "异常地址: {}", exc.address);
         if let Some(ref reason) = exc.reason {
-            println!("异常原因: {}", reason);
+            let _ = writeln!(out, "异常原因: {}", reason);
         }
     }
 
     // Modules
-    println!("\n--- 模块列表 ---");
+    let _ = writeln!(out, "\n--- 模块列表 ---");
     for m in &report.modules {
         let tag = if m.has_symbol { " [sym]" } else { "" };
         match (&m.debug_file, &m.debug_id) {
             (Some(df), Some(id)) => {
-                println!("  {:<40} {:<30} {}{}", m.name, df, id, tag);
+                let _ = writeln!(out, "  {:<40} {:<30} {}{}", m.name, df, id, tag);
             }
             _ => {
-                println!("  {:<40} <无调试信息>", m.name);
+                let _ = writeln!(out, "  {:<40} <无调试信息>", m.name);
             }
         }
     }
@@ -302,26 +306,26 @@ pub fn print_text(report: &CrashReport, include_all_threads: bool, include_regis
         }
 
         if thread.is_crash_thread {
-            println!("\n--- 崩溃调用栈 (线程 #{}) ---", thread.index);
+            let _ = writeln!(out, "\n--- 崩溃调用栈 (线程 #{}) ---", thread.index);
         } else {
-            println!("\n--- 线程 #{} ---", thread.index);
+            let _ = writeln!(out, "\n--- 线程 #{} ---", thread.index);
         }
 
         if include_registers {
             if let Some(ref regs) = thread.registers {
-                println!("  寄存器:");
+                let _ = writeln!(out, "  寄存器:");
                 for chunk in regs.chunks(4) {
                     let line: Vec<String> = chunk
                         .iter()
                         .map(|r| format!("{:<6} {}", r.register, r.value))
                         .collect();
-                    println!("    {}", line.join("  "));
+                    let _ = writeln!(out, "    {}", line.join("  "));
                 }
             }
         }
 
         if thread.frames.is_empty() {
-            println!("  <无已解析的调用帧>");
+            let _ = writeln!(out, "  <无已解析的调用帧>");
             continue;
         }
 
@@ -331,7 +335,7 @@ pub fn print_text(report: &CrashReport, include_all_threads: bool, include_regis
                 (Some(f), _) => f.clone(),
                 _ => "<未知位置>".to_string(),
             };
-            println!("#{:>2} {:<50} ({})", frame.index, frame.function, location);
+            let _ = writeln!(out, "#{:>2} {:<50} ({})", frame.index, frame.function, location);
         }
     }
 
@@ -342,7 +346,9 @@ pub fn print_text(report: &CrashReport, include_all_threads: bool, include_regis
             .filter(|t| !t.is_crash_thread)
             .count();
         if other_count > 0 {
-            println!("\n其他 {} 个线程的调用栈 (使用 --all-threads 查看)", other_count);
+            let _ = writeln!(out, "\n其他 {} 个线程的调用栈 (使用 --all-threads 查看)", other_count);
         }
     }
+
+    out
 }
