@@ -4,4 +4,3 @@
 *.sym
 .DS_Store
 Thumbs.db
-Cargo.lock
